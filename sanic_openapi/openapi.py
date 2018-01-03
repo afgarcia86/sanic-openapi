@@ -5,8 +5,9 @@ from sanic.blueprints import Blueprint
 from sanic.response import json
 from sanic.views import CompositionView
 
-from .doc import route_specs, RouteSpec, serialize_schema, definitions
+from .doc import route_specs, RouteSpec, serialize_schema, definitions, excluded_static
 
+import logging
 
 blueprint = Blueprint('openapi', url_prefix='openapi')
 
@@ -41,6 +42,18 @@ def build_spec(app, loop):
     _spec['schemes'] = getattr(app.config, 'API_SCHEMES', ['http'])
 
     # --------------------------------------------------------------- #
+    # Security Definitions
+    # --------------------------------------------------------------- #
+
+    _spec['securityDefinitions'] = {
+        "x-api-key": {
+            "type": 'apiKey',
+            "name": 'x-api-key',
+            "in": 'header'
+        }
+    }
+
+    # --------------------------------------------------------------- #
     # Blueprint Tags
     # --------------------------------------------------------------- #
 
@@ -54,9 +67,10 @@ def build_spec(app, loop):
 
     paths = {}
     for uri, route in app.router.routes_all.items():
-        if uri.startswith("/swagger") or uri.startswith("/openapi") \
-                or '<file_uri' in uri:
-                # TODO: add static flag in sanic routes
+        if uri.startswith('/swagger') or uri.startswith('/openapi') \
+                or '<file_uri' in uri \
+                or any(uri.startswith(path) for path in excluded_static) \
+                or uri.endswith('/'):
             continue
 
         # --------------------------------------------------------------- #
@@ -74,10 +88,8 @@ def build_spec(app, loop):
         methods = {}
         for _method, _handler in method_handlers:
             route_spec = route_specs.get(_handler) or RouteSpec()
-
             if _method == 'OPTIONS' or route_spec.exclude:
                 continue
-
             consumes_content_types = route_spec.consumes_content_type or \
                 getattr(app.config, 'API_CONSUMES_CONTENT_TYPES', ['application/json'])
             produces_content_types = route_spec.produces_content_type or \
@@ -103,6 +115,7 @@ def build_spec(app, loop):
                             'in': consumer.location,
                             'name': name
                         }
+                        route_parameters.append(route_param)
                 else:
                     route_param = {
                         **spec,
@@ -110,12 +123,22 @@ def build_spec(app, loop):
                         'in': consumer.location,
                         'name': consumer.field.name if hasattr(consumer.field, 'name') else 'body'
                     }
+                    if '$ref' in route_param:
+                        route_param["schema"] = {'$ref': route_param['$ref']}
+                        del route_param['$ref']
+                    route_parameters.append(route_param)
 
-                if '$ref' in route_param:
-                    route_param["schema"] = {'$ref': route_param['$ref']}
-                    del route_param['$ref']
+            # Add Security by default
+            # security = []
+            # security.append({'x-api-key': []})
 
-                route_parameters.append(route_param)
+            # Responses - Add Default Response
+            if 200 not in route_spec.responses:
+                route_spec.responses['200'] = {
+                    "description": 'Successful Operation',
+                    "example": None,
+                    "schema": serialize_schema(route_spec.produces) if route_spec.produces else None
+                }
 
             endpoint = remove_nulls({
                 'operationId': route_spec.operation or route.name,
@@ -125,20 +148,15 @@ def build_spec(app, loop):
                 'produces': produces_content_types,
                 'tags': route_spec.tags or None,
                 'parameters': route_parameters,
-                'responses': {
-                    "200": {
-                        "description": None,
-                        "examples": None,
-                        "schema": serialize_schema(route_spec.produces) if route_spec.produces else None
-                    }
-                },
+                'responses': route_spec.responses,
+                'security': route_spec.security
             })
 
             methods[_method.lower()] = endpoint
 
         uri_parsed = uri
         for parameter in route.parameters:
-            uri_parsed = re.sub('<'+parameter.name+'.*?>', '{'+parameter.name+'}', uri_parsed)
+            uri_parsed = re.sub('<' + parameter.name + '.*?>', '{' + parameter.name + '}', uri_parsed)
 
         paths[uri_parsed] = methods
 
@@ -147,20 +165,6 @@ def build_spec(app, loop):
     # --------------------------------------------------------------- #
 
     _spec['definitions'] = {obj.object_name: definition for cls, (obj, definition) in definitions.items()}
-
-    # --------------------------------------------------------------- #
-    # Tags
-    # --------------------------------------------------------------- #
-
-    # TODO: figure out how to get descriptions in these
-    tags = {}
-    for route_spec in route_specs.values():
-        if route_spec.blueprint and route_spec.blueprint.name in ('swagger', 'openapi'):
-                # TODO: add static flag in sanic routes
-            continue
-        for tag in route_spec.tags:
-            tags[tag] = True
-    _spec['tags'] = [{"name": name} for name in tags.keys()]
 
     _spec['paths'] = paths
 

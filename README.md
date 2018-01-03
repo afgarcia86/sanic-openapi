@@ -40,12 +40,15 @@ from sanic_openapi import doc
 @app.get("/user/<user_id:int>")
 @doc.summary("Fetches a user by ID")
 @doc.produces({ "user": { "name": str, "id": int } })
+@doc.response(200, 'Successful')
+@doc.response(404, 'Not found')
 async def get_user(request, user_id):
     ...
 
 @app.post("/user")
 @doc.summary("Creates a user")
 @doc.consumes({"user": { "name": str }}, location="body")
+@doc.response(201, 'Created')
 async def create_user(request):
     ...
 ```
@@ -84,6 +87,55 @@ class Car:
 class Garage:
     spaces = doc.Integer("How many cars can fit in the garage")
     cars = doc.List(Car, description="All cars in the garage")
+```
+
+### Add Security and Security Definitions
+
+```python
+from sanic_openapi import doc
+
+@app.get("/auth_required")
+@doc.security('x-api-key')
+async def auth_required(request):
+    ...
+```
+*securityDefinitions* 
+
+in: openapi.py
+```
+_spec['securityDefinitions'] = {
+        "x-api-key": {
+            "type": 'apiKey',
+            "name": 'x-api-key',
+            "in": 'header'
+        }
+    }
+```
+
+### Exclude Routes
+```python
+from sanic_openapi import doc
+
+@app.get("/private")
+@doc.exclude(True)
+async def private(request):
+    ...
+```
+
+*Excluding Static*
+```
+doc.excluded_static.add('/favicon.ico')
+app.static('/favicon.ico', favicon_path)
+```
+
+### Custom Menu Tags
+```python
+from sanic_openapi import doc
+
+@app.get("/special")
+@doc.tag('Special Menu ')
+async def special(request):
+    ...
 ```
 
 ### Configure all the things

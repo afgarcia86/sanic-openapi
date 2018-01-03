@@ -3,11 +3,13 @@ from datetime import date, datetime
 
 
 class Field:
-    def __init__(self, description=None, required=None, name=None, choices=None):
+
+    def __init__(self, description=None, required=None, name=None, choices=None, default=None):
         self.name = name
         self.description = description
         self.required = required
         self.choices = choices
+        self.default = default
 
     def serialize(self):
         output = {}
@@ -19,6 +21,8 @@ class Field:
             output['required'] = self.required
         if self.choices is not None:
             output['enum'] = self.choices
+        if self.default is not None:
+            output['default'] = self.default
         return output
 
 
@@ -184,13 +188,15 @@ def serialize_schema(schema):
     return {}
 
 
+
 # --------------------------------------------------------------- #
 # Route Documenters
 # --------------------------------------------------------------- #
 
 
-class RouteSpec(object):
+class RouteSpec:
     consumes = None
+    responses = None
     consumes_content_type = None
     produces = None
     produces_content_type = None
@@ -199,11 +205,15 @@ class RouteSpec(object):
     operation = None
     blueprint = None
     tags = None
+    responses = None
     exclude = None
+    security = None
 
     def __init__(self):
         self.tags = []
         self.consumes = []
+        self.responses = {}
+        self.security = []
         super().__init__()
 
 
@@ -222,8 +232,7 @@ route_specs = defaultdict(RouteSpec)
 
 
 def route(summary=None, description=None, consumes=None, produces=None,
-          consumes_content_type=None, produces_content_type=None,
-          exclude=None):
+          consumes_content_type=None, produces_content_type=None, responses=None, exclude=None, security=None):
     def inner(func):
         route_spec = route_specs[func]
 
@@ -239,16 +248,13 @@ def route(summary=None, description=None, consumes=None, produces=None,
             route_spec.consumes_content_type = consumes_content_type
         if produces_content_type is not None:
             route_spec.produces_content_type = produces_content_type
+        if responses is not None:
+            route_spec.responses = responses
         if exclude is not None:
             route_spec.exclude = exclude
+        if security is not None:
+            route_spec.security = security
 
-        return func
-    return inner
-
-
-def exclude(boolean):
-    def inner(func):
-        route_specs[func].exclude = boolean
         return func
     return inner
 
@@ -288,8 +294,32 @@ def produces(*args, content_type=None):
     return inner
 
 
+def response(code, description=None, examples=None, schema=None):
+    def inner(func):
+        route_specs[func].responses[code] = {'description': description, 'example': examples, 'schema': schema}
+        return func
+    return inner
+
+
 def tag(name):
     def inner(func):
         route_specs[func].tags.append(name)
         return func
     return inner
+
+
+def exclude(boolean):
+    def inner(func):
+        route_specs[func].exclude = boolean
+        return func
+    return inner
+
+
+def security(name, options=[]):
+    def inner(func):
+        route_specs[func].security.append({name: options})
+        return func
+    return inner
+
+
+excluded_static = set()
