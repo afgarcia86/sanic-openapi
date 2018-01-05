@@ -76,17 +76,32 @@ async def get_garage(request):
 
 ```
 
+### Detailed Responses
+
+```
+@doc.response(code=300, description="testing", examples={"user": {"name": str}}, schema=doc.List(NewDataset))
+```
+
 ### Get more descriptive
 
 ```python
-class Car:
-    make = doc.String("Who made the car")
-    model = doc.String("Type of car.  This will vary by make")
-    year = doc.Integer("4-digit year of the car", required=False)
+class InnerNestedObject():
+    name = doc.String("this is crazy", example="look", default="I am the default")
+    array = doc.List([doc.String(example="im inside")], "no its not")
 
-class Garage:
-    spaces = doc.Integer("How many cars can fit in the garage")
-    cars = doc.List(Car, description="All cars in the garage")
+
+class NestedObject():
+    name = doc.String("some name", example="hello world", required=True)
+    array = doc.List([doc.String(example="sample string")], "An array in the nested object", required=True)
+    inner_nested = doc.Object(InnerNestedObject, "A dream inside a dream", required=True)
+
+
+class ParentDataset():
+    name = doc.String("The name of the parent object.", required=True, example="DemoObject")
+    example_list = doc.List([
+        doc.String(example="sample string")
+    ], "example list description", required=True)
+    nested = doc.Object(NestedObject, "example Nested Object", required=True)
 ```
 
 ### Add Security and Security Definitions
@@ -133,7 +148,7 @@ app.static('/favicon.ico', favicon_path)
 from sanic_openapi import doc
 
 @app.get("/special")
-@doc.tag('Special Menu ')
+@doc.tag('Special Menu')
 async def special(request):
     ...
 ```

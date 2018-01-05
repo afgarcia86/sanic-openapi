@@ -1,15 +1,19 @@
 from collections import defaultdict
 from datetime import date, datetime
 
+import pprint
+pp = pprint.PrettyPrinter(depth=4)
+
 
 class Field:
 
-    def __init__(self, description=None, required=None, name=None, choices=None, default=None):
+    def __init__(self, description=None, required=None, name=None, choices=None, default=None, example=None):
         self.name = name
         self.description = description
         self.required = required
         self.choices = choices
         self.default = default
+        self.example = example
 
     def serialize(self):
         output = {}
@@ -23,10 +27,13 @@ class Field:
             output['enum'] = self.choices
         if self.default is not None:
             output['default'] = self.default
+        if self.example is not None:
+            output['example'] = self.example
         return output
 
 
 class Integer(Field):
+
     def serialize(self):
         return {
             "type": "integer",
@@ -36,6 +43,7 @@ class Integer(Field):
 
 
 class Float(Field):
+
     def serialize(self):
         return {
             "type": "number",
@@ -45,6 +53,7 @@ class Float(Field):
 
 
 class String(Field):
+
     def serialize(self):
         return {
             "type": "string",
@@ -53,6 +62,7 @@ class String(Field):
 
 
 class Boolean(Field):
+
     def serialize(self):
         return {
             "type": "boolean",
@@ -65,6 +75,7 @@ class Tuple(Field):
 
 
 class Date(Field):
+
     def serialize(self):
         return {
             "type": "string",
@@ -74,6 +85,7 @@ class Date(Field):
 
 
 class DateTime(Field):
+
     def serialize(self):
         return {
             "type": "string",
@@ -83,6 +95,7 @@ class DateTime(Field):
 
 
 class Dictionary(Field):
+
     def __init__(self, fields=None, **kwargs):
         self.fields = fields or {}
         super().__init__(**kwargs)
@@ -96,6 +109,7 @@ class Dictionary(Field):
 
 
 class List(Field):
+
     def __init__(self, items=None, *args, **kwargs):
         self.items = items or []
         if type(self.items) is not list:
@@ -107,9 +121,12 @@ class List(Field):
             items = Tuple(self.items).serialize()
         elif self.items:
             items = serialize_schema(self.items[0])
+
         return {
             "type": "array",
-            "items": items
+            "items": items,
+            "description": self.description if self.description else None,
+            "required": self.required if self.required else None
         }
 
 
@@ -117,6 +134,7 @@ definitions = {}
 
 
 class Object(Field):
+
     def __init__(self, cls, *args, object_name=None, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -128,13 +146,18 @@ class Object(Field):
 
     @property
     def definition(self):
+        _properties = {}
+        _required = []
+        for key, schema in self.cls.__dict__.items():
+            if not key.startswith("_"):
+                _item = serialize_schema(schema)
+                _properties[key] = _item
+                if _item.get('required'):
+                    _required.append(key)
         return {
             "type": "object",
-            "properties": {
-                key: serialize_schema(schema)
-                for key, schema in self.cls.__dict__.items()
-                if not key.startswith("_")
-                },
+            "required": _required,
+            "properties": _properties,
             **super().serialize()
         }
 
@@ -142,6 +165,15 @@ class Object(Field):
         return {
             "type": "object",
             "$ref": "#/definitions/{}".format(self.object_name),
+            **super().serialize()
+        }
+
+
+class File(Field):
+
+    def serialize(self):
+        return {
+            "type": "file",
             **super().serialize()
         }
 
@@ -188,7 +220,6 @@ def serialize_schema(schema):
     return {}
 
 
-
 # --------------------------------------------------------------- #
 # Route Documenters
 # --------------------------------------------------------------- #
@@ -206,12 +237,15 @@ class RouteSpec:
     blueprint = None
     tags = None
     responses = None
+    parameters = None
     exclude = None
     security = None
+    deprecated = None
 
     def __init__(self):
         self.tags = []
         self.consumes = []
+        self.parameters = {}
         self.responses = {}
         self.security = []
         super().__init__()
@@ -231,8 +265,18 @@ class RouteField(object):
 route_specs = defaultdict(RouteSpec)
 
 
-def route(summary=None, description=None, consumes=None, produces=None,
-          consumes_content_type=None, produces_content_type=None, responses=None, exclude=None, security=None):
+def route(summary=None,
+          description=None,
+          consumes=None,
+          produces=None,
+          consumes_content_type=None,
+          produces_content_type=None,
+          responses=None,
+          parameters=None,
+          exclude=None,
+          security=None,
+          deprecated=None):
+
     def inner(func):
         route_spec = route_specs[func]
 
@@ -250,10 +294,14 @@ def route(summary=None, description=None, consumes=None, produces=None,
             route_spec.produces_content_type = produces_content_type
         if responses is not None:
             route_spec.responses = responses
+        if parameters is not None:
+            route_spec.parameters = parameters
         if exclude is not None:
             route_spec.exclude = exclude
         if security is not None:
             route_spec.security = security
+        if deprecated is not None:
+            route_spec.deprecated = deprecated
 
         return func
     return inner
@@ -273,13 +321,37 @@ def description(text):
     return inner
 
 
-def consumes(*args, content_type=None, location='query', required=False):
+def consumes(*args, content_type=None, location='body', required=False):
     def inner(func):
         if args:
             for arg in args:
                 field = RouteField(arg, location, required)
                 route_specs[func].consumes.append(field)
                 route_specs[func].consumes_content_type = content_type
+        return func
+    return inner
+
+
+def params(*args, location='query', required=False):
+    def inner(func):
+        if args:
+            for arg in args:                
+                arg_type = type(arg)
+                if arg_type is type:
+                    for key, schema in arg.__dict__.items():
+                        if not key.startswith("_"):
+                            _d = {'location': location, 'required': required}
+                            for k, v in arg.__dict__.items():
+                                _d[k] = v
+                            field = RouteField(schema, _d['location'], _d['required'])
+                            route_specs[func].parameters[key] = field
+                else:
+                    _d = {'location': location, 'required': required}
+                    for k, v in arg.__dict__.items():
+                        _d[k] = v
+
+                    field = RouteField(arg, _d['location'], _d['required'])
+                    route_specs[func].parameters[_d['name']] = field
         return func
     return inner
 
@@ -296,7 +368,7 @@ def produces(*args, content_type=None):
 
 def response(code, description=None, examples=None, schema=None):
     def inner(func):
-        route_specs[func].responses[code] = {'description': description, 'example': examples, 'schema': schema}
+        route_specs[func].responses[code] = {'description': description, 'examples': examples, 'schema': schema}
         return func
     return inner
 
@@ -315,6 +387,13 @@ def exclude(boolean):
     return inner
 
 
+def deprecated(boolean):
+    def inner(func):
+        route_specs[func].deprecated = boolean
+        return func
+    return inner
+
+
 def security(name, options=[]):
     def inner(func):
         route_specs[func].security.append({name: options})
@@ -322,4 +401,7 @@ def security(name, options=[]):
     return inner
 
 
+# Exclude Static Routes
 excluded_static = set()
+excluded_static.add('/openapi')
+excluded_static.add('/swagger')

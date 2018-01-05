@@ -39,6 +39,8 @@ def build_spec(app, loop):
             "url": getattr(app.config, 'API_LICENSE_URL', None)
         }
     }
+    _spec['host'] = getattr(app.config, 'API_HOST', None)
+    _spec['basePath'] = getattr(app.config, 'API_BASE_PATH', None)
     _spec['schemes'] = getattr(app.config, 'API_SCHEMES', ['http'])
 
     # --------------------------------------------------------------- #
@@ -66,11 +68,18 @@ def build_spec(app, loop):
                     route_spec.tags.append(blueprint.name)
 
     paths = {}
-    for uri, route in app.router.routes_all.items():
-        if uri.startswith('/swagger') or uri.startswith('/openapi') \
-                or '<file_uri' in uri \
-                or any(uri.startswith(path) for path in excluded_static) \
-                or uri.endswith('/'):
+
+    dedupe_routes = []
+    seen = set()
+    for x in app.router.routes_all.items():
+        uri = x[0][:-1] if x[0].endswith('/') else x[0]
+        if uri not in seen:
+            dedupe_routes.append(x)
+            seen.add(uri)
+
+    for uri, route in dedupe_routes:
+        if any(uri.startswith(path) for path in excluded_static) \
+                or '<file_uri' in uri:
             continue
 
         # --------------------------------------------------------------- #
@@ -95,7 +104,7 @@ def build_spec(app, loop):
             produces_content_types = route_spec.produces_content_type or \
                 getattr(app.config, 'API_PRODUCES_CONTENT_TYPES', ['application/json'])
 
-            # Parameters - Path & Query String
+            # Path Parameters
             route_parameters = []
             for parameter in route.parameters:
                 route_parameters.append({
@@ -104,6 +113,17 @@ def build_spec(app, loop):
                     'in': 'path',
                     'name': parameter.name
                 })
+
+            # Query String Parameters
+            for name, parameter in route_spec.parameters.items():
+                spec = serialize_schema(parameter.field)
+                route_param = {
+                    **spec,
+                    'required': parameter.required,
+                    'in': parameter.location,
+                    'name': name
+                }
+                route_parameters.append(route_param)
 
             for consumer in route_spec.consumes:
                 spec = serialize_schema(consumer.field)
@@ -128,16 +148,18 @@ def build_spec(app, loop):
                         del route_param['$ref']
                     route_parameters.append(route_param)
 
-            # Add Security by default
+            # Optional add Security by default
             # security = []
             # security.append({'x-api-key': []})
+            # if len(route_spec.security) == 0:
+            #     route_spec.security = security
 
             # Responses - Add Default Response
             if 200 not in route_spec.responses:
                 route_spec.responses['200'] = {
                     "description": 'Successful Operation',
                     "example": None,
-                    "schema": serialize_schema(route_spec.produces) if route_spec.produces else None
+                    "schema": serialize_schema(route_spec.produces.field) if route_spec.produces else None
                 }
 
             endpoint = remove_nulls({
@@ -149,7 +171,8 @@ def build_spec(app, loop):
                 'tags': route_spec.tags or None,
                 'parameters': route_parameters,
                 'responses': route_spec.responses,
-                'security': route_spec.security
+                'security': route_spec.security,
+                'deprecated': route_spec.deprecated
             })
 
             methods[_method.lower()] = endpoint
