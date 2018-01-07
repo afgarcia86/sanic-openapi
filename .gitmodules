@@ -1,0 +1,4 @@
+[submodule "bootstrap-swagger-ui"]
+	path = openapi/ui/assets
+	url = https://github.com/afgarcia86/bootstrap-swagger-ui
+	branch = ui-assets
