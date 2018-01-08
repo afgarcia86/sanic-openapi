@@ -148,6 +148,15 @@ class Object(Field):
     def definition(self):
         _properties = {}
         _required = []
+
+        for base in self.cls.__bases__:
+            for key, schema in base.__dict__.items():
+                if not key.startswith("_"):
+                    _item = serialize_schema(schema)
+                    _properties[key] = _item
+                    if _item.get('required'):
+                        _required.append(key)
+
         for key, schema in self.cls.__dict__.items():
             if not key.startswith("_"):
                 _item = serialize_schema(schema)
